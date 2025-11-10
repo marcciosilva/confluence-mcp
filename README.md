@@ -33,6 +33,7 @@ Before running the installer:
    - Example: `https://yourcompany.atlassian.net`
 
 3. **Python 3.8+** installed
+   - The installer creates a virtual environment automatically (no system-wide packages needed)
 
 4. **Gemini CLI** installed
    - Install from: https://github.com/google-gemini/gemini-cli
@@ -92,6 +93,7 @@ After installation, configuration is stored in:
 - **Credentials**: `~/.confluence_mcp.env`
 - **Index**: `~/.confluence_mcp/index/`
 - **Gemini Config**: `~/.gemini/settings.json`
+- **Virtual Environment**: `./venv/` (in the project directory)
 
 ### Updating Documentation
 
@@ -104,8 +106,7 @@ When your Confluence docs are updated:
 
 **Option 2: Command line**
 ```bash
-source ~/.confluence_mcp.env
-python3 confluence_knowledge_base.py
+./venv/bin/python confluence_knowledge_base.py
 ```
 
 **Option 3: Automated (Weekly)**

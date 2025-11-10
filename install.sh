@@ -14,6 +14,7 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$HOME/.confluence_mcp.env"
 GEMINI_SETTINGS="$HOME/.gemini/settings.json"
+VENV_DIR="$SCRIPT_DIR/venv"
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
@@ -41,14 +42,27 @@ fi
 echo -e "${GREEN}✓ pip3 found${NC}"
 echo ""
 
-# Step 2: Install dependencies
-echo -e "${BLUE}[2/7] Installing Python dependencies...${NC}"
+# Step 2: Create virtual environment and install dependencies
+echo -e "${BLUE}[2/7] Setting up virtual environment...${NC}"
+
+if [ -d "$VENV_DIR" ]; then
+    echo -e "${YELLOW}Virtual environment already exists${NC}"
+else
+    echo "Creating virtual environment..."
+    python3 -m venv "$VENV_DIR"
+    echo -e "${GREEN}✓ Virtual environment created${NC}"
+fi
+
+echo "Activating virtual environment..."
+source "$VENV_DIR/bin/activate"
+
+echo "Installing Python dependencies..."
 echo "This may take a few minutes..."
 
-pip3 install -q --upgrade pip
-pip3 install -q -r "$SCRIPT_DIR/requirements.txt"
+pip install -q --upgrade pip
+pip install -q -r "$SCRIPT_DIR/requirements.txt"
 
-echo -e "${GREEN}✓ Dependencies installed${NC}"
+echo -e "${GREEN}✓ Dependencies installed in virtual environment${NC}"
 echo ""
 
 # Step 3: Gather Confluence credentials
@@ -236,7 +250,7 @@ if ! command -v gemini &> /dev/null; then
 {
   "mcpServers": {
     "confluence-kb": {
-      "command": "python3",
+      "command": "$VENV_DIR/bin/python",
       "args": ["$SCRIPT_DIR/confluence_knowledge_base.py"],
       "env": {
         "CONFLUENCE_URL": "$CONFLUENCE_URL",
@@ -263,7 +277,7 @@ else
 {
   "mcpServers": {
     "confluence-kb": {
-      "command": "python3",
+      "command": "$VENV_DIR/bin/python",
       "args": ["$SCRIPT_DIR/confluence_knowledge_base.py"],
       "env": {
         "CONFLUENCE_URL": "$CONFLUENCE_URL",
@@ -285,7 +299,7 @@ EOF
         echo ""
         cat << EOF
 "confluence-kb": {
-  "command": "python3",
+  "command": "$VENV_DIR/bin/python",
   "args": ["$SCRIPT_DIR/confluence_knowledge_base.py"],
   "env": {
     "CONFLUENCE_URL": "$CONFLUENCE_URL",
@@ -325,7 +339,9 @@ echo "  • $ENV_FILE"
 echo "  • $GEMINI_SETTINGS"
 echo ""
 echo "To reindex when documentation is updated:"
-echo "  ${BLUE}source $ENV_FILE && python3 $SCRIPT_DIR/confluence_knowledge_base.py${NC}"
+echo "  ${BLUE}$VENV_DIR/bin/python $SCRIPT_DIR/confluence_knowledge_base.py${NC}"
+echo ""
+echo "Virtual environment location: $VENV_DIR"
 echo ""
 echo "For help, see: $SCRIPT_DIR/KNOWLEDGE_BASE_SETUP.md"
 echo ""
