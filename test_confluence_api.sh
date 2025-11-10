@@ -19,9 +19,35 @@ echo "  Email: $CONFLUENCE_EMAIL"
 echo "  Spaces: $CONFLUENCE_SPACES"
 echo ""
 
-# Test 1: Basic connectivity
+# Detect Confluence type
+echo "Detecting Confluence type..."
+if [[ "$CONFLUENCE_URL" =~ "atlassian.net" ]]; then
+    CONFLUENCE_TYPE="Cloud"
+    echo "Detected: Confluence Cloud"
+elif [[ "$CONFLUENCE_URL" =~ "atlassian.com" ]]; then
+    CONFLUENCE_TYPE="Cloud"
+    echo "Detected: Confluence Cloud"
+else
+    CONFLUENCE_TYPE="Data Center/Server"
+    echo "Detected: Confluence Data Center or Server (self-hosted)"
+fi
+echo ""
+
+# Test 1: Basic connectivity and redirect detection
 echo "Test 1: Basic connectivity to Confluence..."
-curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" "$CONFLUENCE_URL/wiki"
+RESPONSE=$(curl -s -L -w "\nHTTP_CODE:%{http_code}\nREDIRECT_URL:%{redirect_url}\nFINAL_URL:%{url_effective}" "$CONFLUENCE_URL/wiki")
+
+HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d':' -f2)
+REDIRECT_URL=$(echo "$RESPONSE" | grep "REDIRECT_URL:" | cut -d':' -f2-)
+FINAL_URL=$(echo "$RESPONSE" | grep "FINAL_URL:" | cut -d':' -f2-)
+
+echo "HTTP Status: $HTTP_CODE"
+if [ -n "$REDIRECT_URL" ]; then
+    echo "⚠ Redirect detected to: $REDIRECT_URL"
+    if [[ "$REDIRECT_URL" =~ "login" ]] || [[ "$FINAL_URL" =~ "login" ]]; then
+        echo "⚠ WARNING: Redirecting to login page - this may indicate SSO/external authentication"
+    fi
+fi
 echo ""
 
 # Test 2: API authentication (get current user)
@@ -107,15 +133,24 @@ echo "================================"
 echo "Diagnostic Summary"
 echo "================================"
 echo ""
-echo "Common 403 error causes:"
-echo "1. User doesn't have Confluence license (not a licensed user)"
-echo "2. User doesn't have space permissions"
-echo "3. API token created by different account than the email"
-echo "4. Using PAT instead of API token (Cloud vs Data Center)"
+echo "Confluence Type: $CONFLUENCE_TYPE"
 echo ""
-echo "Next steps:"
+echo "Common 302/403 error causes:"
+echo "1. SSO/External Authentication (Okta, Google, etc.) - API tokens may need special setup"
+echo "2. User doesn't have Confluence license (not a licensed user)"
+echo "3. User doesn't have space permissions"
+echo "4. API token created by different account than the email"
+echo "5. Using PAT instead of API token (Cloud vs Data Center mismatch)"
+echo ""
+echo "Next steps based on errors:"
+echo "- If seeing 302 redirects to login: Your org likely uses SSO - contact admin"
+echo "  → Admin needs to enable 'API token authentication' or 'programmatic access'"
+echo "  → Or you may need to use OAuth 2.0 instead of API tokens"
 echo "- If Test 2 failed (403): Contact admin to grant you Confluence product access"
 echo "- If Test 3 failed (403): Your account needs to be a licensed Confluence user"
 echo "- If Test 4 failed (403): Admin needs to grant you space permissions"
-echo "- If Test 2 passed but Test 4 failed: You have access but not to that space"
+echo "- If using Data Center/Server: Try Personal Access Token instead of API token"
+echo ""
+echo "For SSO environments:"
+echo "  See: https://support.atlassian.com/organization-administration/docs/enforce-sso/"
 echo ""
