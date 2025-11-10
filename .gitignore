@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Confluence MCP specific
+.env
+.confluence_mcp.env
+*.env.local
+
+# ChromaDB index (user-specific)
+index/
+.confluence_mcp/
+
+# Logs
+*.log
+reindex.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets - NEVER COMMIT THESE!
+*api_token*
+*api_key*
+*secret*
+*credentials*
