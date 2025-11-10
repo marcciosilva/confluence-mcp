@@ -13,12 +13,12 @@ cd confluence-knowledge-base
 ```
 
 The interactive wizard will:
-1. ✅ Install dependencies
+1. ✅ Install dependencies in a virtual environment
 2. ✅ Ask for your Confluence credentials
 3. ✅ Discover your spaces
 4. ✅ Help you choose which spaces to index
 5. ✅ Build the initial knowledge base
-6. ✅ Configure Gemini CLI automatically
+6. ✅ Configure Gemini CLI automatically (merges with existing config)
 
 ### What You'll Need
 

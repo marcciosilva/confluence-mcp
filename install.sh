@@ -292,25 +292,59 @@ else
 EOF
         echo -e "${GREEN}✓ Created Gemini CLI configuration${NC}"
     else
-        # Settings file exists - need to merge
-        echo -e "${YELLOW}⚠ Gemini settings.json already exists${NC}"
-        echo ""
-        echo "Add this to your ~/.gemini/settings.json mcpServers section:"
-        echo ""
-        cat << EOF
-"confluence-kb": {
-  "command": "$VENV_DIR/bin/python",
-  "args": ["$SCRIPT_DIR/confluence_knowledge_base.py"],
-  "env": {
-    "CONFLUENCE_URL": "$CONFLUENCE_URL",
-    "CONFLUENCE_EMAIL": "$CONFLUENCE_EMAIL",
-    "CONFLUENCE_API_TOKEN": "$CONFLUENCE_API_TOKEN",
-    "CONFLUENCE_SPACES": "$CONFLUENCE_SPACES"
-  },
-  "timeout": 60000
-}
-EOF
-        echo ""
+        # Settings file exists - merge automatically
+        echo -e "${YELLOW}Existing Gemini settings.json found${NC}"
+        echo "Merging confluence-kb into existing configuration..."
+
+        # Backup existing settings
+        cp "$GEMINI_SETTINGS" "$GEMINI_SETTINGS.backup"
+        echo -e "${GREEN}✓ Backed up to $GEMINI_SETTINGS.backup${NC}"
+
+        # Use Python to merge the JSON
+        python3 << PYTHON_EOF
+import json
+import sys
+
+settings_file = "$GEMINI_SETTINGS"
+
+try:
+    # Read existing settings
+    with open(settings_file, 'r') as f:
+        settings = json.load(f)
+
+    # Ensure mcpServers exists
+    if 'mcpServers' not in settings:
+        settings['mcpServers'] = {}
+
+    # Add confluence-kb server
+    settings['mcpServers']['confluence-kb'] = {
+        "command": "$VENV_DIR/bin/python",
+        "args": ["$SCRIPT_DIR/confluence_knowledge_base.py"],
+        "env": {
+            "CONFLUENCE_URL": "$CONFLUENCE_URL",
+            "CONFLUENCE_EMAIL": "$CONFLUENCE_EMAIL",
+            "CONFLUENCE_API_TOKEN": "$CONFLUENCE_API_TOKEN",
+            "CONFLUENCE_SPACES": "$CONFLUENCE_SPACES"
+        },
+        "timeout": 60000
+    }
+
+    # Write back
+    with open(settings_file, 'w') as f:
+        json.dump(settings, f, indent=2)
+
+    sys.exit(0)
+except Exception as e:
+    print(f"Error merging settings: {e}", file=sys.stderr)
+    sys.exit(1)
+PYTHON_EOF
+
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✓ Added confluence-kb to existing Gemini configuration${NC}"
+        else
+            echo -e "${RED}✗ Failed to merge configuration${NC}"
+            echo "You can restore from backup: $GEMINI_SETTINGS.backup"
+        fi
     fi
 fi
 
