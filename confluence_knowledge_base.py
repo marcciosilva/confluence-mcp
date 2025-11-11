@@ -1,116 +1,124 @@
 #!/usr/bin/env python3
 """
-Confluence Knowledge Base MCP Server
-Downloads Confluence documentation, creates vector embeddings, and provides
-semantic search capabilities for natural language Q&A with Gemini CLI.
+Local Documentation Knowledge Base MCP Server
+Reads documentation from local files (including PDFs), creates vector embeddings,
+and provides semantic search capabilities for natural language Q&A with Gemini CLI.
 """
 
 import os
 import json
-import requests
+import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from mcp.server.fastmcp import FastMCP
-from bs4 import BeautifulSoup
 import time
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 # Initialize FastMCP server
-mcp = FastMCP("Confluence Knowledge Base")
+mcp = FastMCP("Local Documentation Knowledge Base")
 
 # Configuration
-CONFLUENCE_URL = os.getenv("CONFLUENCE_URL")
-CONFLUENCE_EMAIL = os.getenv("CONFLUENCE_EMAIL")
-CONFLUENCE_API_TOKEN = os.getenv("CONFLUENCE_API_TOKEN")
-SPACES_TO_INDEX = os.getenv("CONFLUENCE_SPACES", "").split(",")  # Comma-separated space keys
+DOCS_DIRECTORY = os.getenv("DOCS_DIRECTORY", "")  # Directory containing documentation files
 INDEX_PATH = Path.home() / ".confluence_mcp" / "index"
 CHUNK_SIZE = 1000  # Characters per chunk
 CHUNK_OVERLAP = 200  # Overlap between chunks
 
 
-class ConfluenceIndexer:
-    """Handles downloading and indexing Confluence content."""
+class DocumentLoader:
+    """Handles loading and processing local documentation files."""
 
-    def __init__(self, url: str, email: str, api_token: str):
-        self.url = url.rstrip('/')
-        self.auth = (email, api_token)
-        self.base_api = f"{self.url}/wiki/rest/api"
+    def __init__(self, docs_directory: str):
+        self.docs_directory = Path(docs_directory) if docs_directory else None
 
-    def fetch_all_pages(self, space_keys: List[str]) -> List[Dict[str, Any]]:
-        """Fetch all pages from specified spaces."""
-        all_pages = []
+    def load_all_documents(self) -> List[Dict[str, Any]]:
+        """Load all documents from the specified directory."""
+        if not self.docs_directory:
+            logger.error("DOCS_DIRECTORY not specified")
+            return []
 
-        for space_key in space_keys:
-            if not space_key.strip():
-                continue
+        if not self.docs_directory.exists():
+            logger.error(f"Directory not found: {self.docs_directory}")
+            return []
 
-            print(f"Fetching pages from space: {space_key}")
-            start = 0
-            limit = 50
+        if not os.access(self.docs_directory, os.R_OK):
+            logger.error(f"No read access to directory: {self.docs_directory}")
+            return []
 
-            while True:
-                params = {
-                    "spaceKey": space_key,
-                    "start": start,
-                    "limit": limit,
-                    "expand": "body.storage,version,space"
-                }
+        all_documents = []
+        supported_extensions = {'.pdf', '.txt', '.md'}
 
-                response = requests.get(
-                    f"{self.base_api}/content",
-                    auth=self.auth,
-                    params=params,
-                    headers={"Accept": "application/json"}
-                )
-                response.raise_for_status()
+        logger.info(f"Loading documents from: {self.docs_directory}")
 
-                data = response.json()
-                results = data.get("results", [])
+        for file_path in self.docs_directory.rglob('*'):
+            if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
+                try:
+                    content = self._load_file(file_path)
+                    if content:
+                        all_documents.append({
+                            "id": str(file_path.relative_to(self.docs_directory)),
+                            "title": file_path.stem,
+                            "source": "local",
+                            "content": content,
+                            "path": str(file_path),
+                            "extension": file_path.suffix
+                        })
+                        logger.info(f"  Loaded: {file_path.name}")
+                except Exception as e:
+                    logger.warning(f"  Failed to load {file_path.name}: {e}")
 
-                if not results:
-                    break
+        logger.info(f"Total documents loaded: {len(all_documents)}")
+        return all_documents
 
-                for page in results:
-                    all_pages.append({
-                        "id": page["id"],
-                        "title": page["title"],
-                        "space": page["space"]["key"],
-                        "content": page["body"]["storage"]["value"],
-                        "url": f"{self.url}/wiki{page['_links']['webui']}",
-                        "version": page["version"]["number"]
-                    })
-
-                print(f"  Fetched {len(results)} pages (total: {len(all_pages)})")
-
-                if len(results) < limit:
-                    break
-
-                start += limit
-                time.sleep(0.5)  # Rate limiting
-
-        print(f"Total pages fetched: {len(all_pages)}")
-        return all_pages
+    def _load_file(self, file_path: Path) -> str:
+        """Load content from a single file based on its type."""
+        if file_path.suffix.lower() == '.pdf':
+            return self._load_pdf(file_path)
+        else:  # .txt, .md, or other text files
+            return self._load_text(file_path)
 
     @staticmethod
-    def clean_html(html_content: str) -> str:
-        """Convert HTML to plain text."""
-        soup = BeautifulSoup(html_content, 'html.parser')
+    def _load_pdf(file_path: Path) -> str:
+        """Extract text from PDF file."""
+        try:
+            import PyPDF2
+            with open(file_path, 'rb') as f:
+                reader = PyPDF2.PdfReader(f)
+                text_parts = []
+                for page in reader.pages:
+                    text = page.extract_text()
+                    if text:
+                        text_parts.append(text)
+                return '\n'.join(text_parts)
+        except ImportError:
+            logger.warning(f"PyPDF2 not installed, skipping PDF: {file_path.name}")
+            return ""
+        except Exception as e:
+            logger.warning(f"Error reading PDF {file_path.name}: {e}")
+            return ""
 
-        # Remove script and style elements
-        for script in soup(["script", "style"]):
-            script.decompose()
-
-        # Get text
-        text = soup.get_text(separator='\n')
-
-        # Clean up whitespace
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = '\n'.join(chunk for chunk in chunks if chunk)
-
-        return text
+    @staticmethod
+    def _load_text(file_path: Path) -> str:
+        """Load plain text file."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except UnicodeDecodeError:
+            # Try with latin-1 encoding as fallback
+            try:
+                with open(file_path, 'r', encoding='latin-1') as f:
+                    return f.read()
+            except Exception as e:
+                logger.warning(f"Error reading text file {file_path.name}: {e}")
+                return ""
 
     @staticmethod
     def chunk_text(text: str, chunk_size: int, overlap: int) -> List[str]:
@@ -161,9 +169,9 @@ class VectorStore:
             metadata={"hnsw:space": "cosine"}
         )
 
-    def index_pages(self, pages: List[Dict[str, Any]], chunk_size: int, overlap: int):
-        """Index pages into vector store."""
-        print(f"Indexing {len(pages)} pages...")
+    def index_documents(self, documents: List[Dict[str, Any]], chunk_size: int, overlap: int):
+        """Index documents into vector store."""
+        logger.info(f"Indexing {len(documents)} documents...")
 
         # Clear existing collection
         self.client.delete_collection("confluence_docs")
@@ -176,29 +184,27 @@ class VectorStore:
         all_metadata = []
         all_ids = []
 
-        for page in pages:
-            # Clean HTML content
-            clean_text = ConfluenceIndexer.clean_html(page["content"])
-
-            # Create chunks
-            chunks = ConfluenceIndexer.chunk_text(clean_text, chunk_size, overlap)
+        for doc in documents:
+            # Create chunks from document content
+            chunks = DocumentLoader.chunk_text(doc["content"], chunk_size, overlap)
 
             # Prepare metadata for each chunk
             for i, chunk in enumerate(chunks):
-                chunk_id = f"{page['id']}_chunk_{i}"
+                chunk_id = f"{doc['id']}_chunk_{i}".replace('/', '_').replace('\\', '_')
                 all_chunks.append(chunk)
                 all_metadata.append({
-                    "page_id": page["id"],
-                    "page_title": page["title"],
-                    "space": page["space"],
-                    "url": page["url"],
+                    "doc_id": doc["id"],
+                    "doc_title": doc["title"],
+                    "source": doc["source"],
+                    "path": doc["path"],
+                    "extension": doc["extension"],
                     "chunk_index": i,
                     "total_chunks": len(chunks)
                 })
                 all_ids.append(chunk_id)
 
-        print(f"Created {len(all_chunks)} chunks from {len(pages)} pages")
-        print("Generating embeddings...")
+        logger.info(f"Created {len(all_chunks)} chunks from {len(documents)} documents")
+        logger.info("Generating embeddings...")
 
         # Add to collection in batches
         batch_size = 100
@@ -212,9 +218,9 @@ class VectorStore:
                 metadatas=batch_metadata,
                 ids=batch_ids
             )
-            print(f"  Indexed {min(i + batch_size, len(all_chunks))}/{len(all_chunks)} chunks")
+            logger.info(f"  Indexed {min(i + batch_size, len(all_chunks))}/{len(all_chunks)} chunks")
 
-        print("Indexing complete!")
+        logger.info("Indexing complete!")
 
     def search(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
         """Search for relevant chunks."""
@@ -235,55 +241,48 @@ class VectorStore:
 
 
 # Initialize components
-print("Initializing Confluence Knowledge Base...")
-indexer = ConfluenceIndexer(CONFLUENCE_URL, CONFLUENCE_EMAIL, CONFLUENCE_API_TOKEN)
+logger.info("Initializing Local Documentation Knowledge Base...")
+doc_loader = DocumentLoader(DOCS_DIRECTORY)
 vector_store = VectorStore(INDEX_PATH)
 
-# Check if index exists, otherwise build it
-index_metadata_file = INDEX_PATH / "metadata.json"
-needs_reindex = True
+# Load and index documents on startup
+logger.info("Loading documents from local directory...")
+documents = doc_loader.load_all_documents()
 
-if index_metadata_file.exists():
-    with open(index_metadata_file, 'r') as f:
-        metadata = json.load(f)
-        print(f"Found existing index with {metadata.get('total_pages', 0)} pages")
-        print(f"Spaces: {metadata.get('spaces', [])}")
-
-        # Check if spaces match
-        if set(metadata.get('spaces', [])) == set(SPACES_TO_INDEX):
-            needs_reindex = False
-            print("Index is up to date!")
-
-if needs_reindex:
-    print("\nBuilding index...")
-    pages = indexer.fetch_all_pages(SPACES_TO_INDEX)
-    vector_store.index_pages(pages, CHUNK_SIZE, CHUNK_OVERLAP)
+if not documents:
+    logger.warning("No documents were loaded. Please check DOCS_DIRECTORY configuration.")
+else:
+    logger.info(f"Successfully loaded {len(documents)} document(s)")
+    logger.info("Building vector index...")
+    vector_store.index_documents(documents, CHUNK_SIZE, CHUNK_OVERLAP)
 
     # Save metadata
+    index_metadata_file = INDEX_PATH / "metadata.json"
     with open(index_metadata_file, 'w') as f:
         json.dump({
-            "total_pages": len(pages),
-            "spaces": SPACES_TO_INDEX,
+            "total_documents": len(documents),
+            "docs_directory": str(DOCS_DIRECTORY),
             "indexed_at": time.time()
         }, f)
 
-    print(f"\nIndexed {len(pages)} pages from spaces: {SPACES_TO_INDEX}")
+    logger.info(f"Indexed {len(documents)} document(s) from: {DOCS_DIRECTORY}")
 
 
 # MCP Resources - Provide context on demand
 @mcp.resource("confluence://knowledge-base")
 def get_knowledge_base_info() -> str:
-    """Provides information about the Confluence knowledge base."""
+    """Provides information about the local documentation knowledge base."""
+    index_metadata_file = INDEX_PATH / "metadata.json"
     if index_metadata_file.exists():
         with open(index_metadata_file, 'r') as f:
             metadata = json.load(f)
 
-        return f"""Confluence Knowledge Base Status:
-- Total Pages: {metadata.get('total_pages', 0)}
-- Spaces Indexed: {', '.join(metadata.get('spaces', []))}
+        return f"""Local Documentation Knowledge Base Status:
+- Total Documents: {metadata.get('total_documents', 0)}
+- Directory: {metadata.get('docs_directory', 'N/A')}
 - Last Indexed: {time.ctime(metadata.get('indexed_at', 0))}
 
-This knowledge base contains your team's documentation from Confluence.
+This knowledge base contains your local documentation files.
 You can ask natural language questions about your systems, and I'll search
 the documentation to provide accurate answers.
 """
@@ -318,8 +317,8 @@ def ask_documentation(question: str, num_sources: int = 5) -> str:
             metadata = result['metadata']
             content = result['content']
 
-            output.append(f"\n--- Source {i}: {metadata['page_title']} (Space: {metadata['space']}) ---")
-            output.append(f"URL: {metadata['url']}")
+            output.append(f"\n--- Source {i}: {metadata['doc_title']} ({metadata['extension']}) ---")
+            output.append(f"Path: {metadata['path']}")
             output.append(f"\nContent:\n{content}\n")
 
         return "\n".join(output)
@@ -329,28 +328,33 @@ def ask_documentation(question: str, num_sources: int = 5) -> str:
 
 
 @mcp.tool()
-def reindex_confluence() -> str:
+def reindex_documents() -> str:
     """
-    Re-download and re-index all Confluence documentation.
+    Re-load and re-index all local documentation files.
     Use this when documentation has been updated.
 
     Returns:
         Status of the reindexing operation
     """
     try:
-        print("\nReindexing Confluence documentation...")
-        pages = indexer.fetch_all_pages(SPACES_TO_INDEX)
-        vector_store.index_pages(pages, CHUNK_SIZE, CHUNK_OVERLAP)
+        logger.info("\nReindexing local documentation...")
+        documents = doc_loader.load_all_documents()
+
+        if not documents:
+            return "No documents found to index. Please check DOCS_DIRECTORY configuration."
+
+        vector_store.index_documents(documents, CHUNK_SIZE, CHUNK_OVERLAP)
 
         # Save metadata
+        index_metadata_file = INDEX_PATH / "metadata.json"
         with open(index_metadata_file, 'w') as f:
             json.dump({
-                "total_pages": len(pages),
-                "spaces": SPACES_TO_INDEX,
+                "total_documents": len(documents),
+                "docs_directory": str(DOCS_DIRECTORY),
                 "indexed_at": time.time()
             }, f)
 
-        return f"Successfully reindexed {len(pages)} pages from spaces: {', '.join(SPACES_TO_INDEX)}"
+        return f"Successfully reindexed {len(documents)} document(s) from: {DOCS_DIRECTORY}"
 
     except Exception as e:
         return f"Error reindexing: {str(e)}"
@@ -358,21 +362,15 @@ def reindex_confluence() -> str:
 
 if __name__ == "__main__":
     # Validate configuration
-    if not all([CONFLUENCE_URL, CONFLUENCE_EMAIL, CONFLUENCE_API_TOKEN]):
-        raise ValueError(
-            "Missing required environment variables: "
-            "CONFLUENCE_URL, CONFLUENCE_EMAIL, CONFLUENCE_API_TOKEN"
+    if not DOCS_DIRECTORY:
+        logger.warning(
+            "DOCS_DIRECTORY environment variable not set. "
+            "Server will start but no documents will be loaded."
         )
 
-    if not SPACES_TO_INDEX or not SPACES_TO_INDEX[0]:
-        raise ValueError(
-            "Missing CONFLUENCE_SPACES environment variable. "
-            "Set it to comma-separated space keys (e.g., 'TEAM,DOCS,ENG')"
-        )
-
-    print("\n" + "="*60)
-    print("Confluence Knowledge Base MCP Server Ready!")
-    print("="*60)
+    logger.info("\n" + "="*60)
+    logger.info("Local Documentation Knowledge Base MCP Server Ready!")
+    logger.info("="*60)
 
     # Start the MCP server
     mcp.run()
