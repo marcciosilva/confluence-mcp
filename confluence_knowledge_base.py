@@ -6,6 +6,7 @@ and provides semantic search capabilities for natural language Q&A with Gemini C
 """
 
 import os
+import sys
 import json
 import logging
 from typing import List, Dict, Any, Optional
@@ -361,6 +362,9 @@ def reindex_documents() -> str:
 
 
 if __name__ == "__main__":
+    # Check for --index-only flag
+    index_only = "--index-only" in sys.argv
+
     # Validate configuration
     if not DOCS_DIRECTORY:
         logger.warning(
@@ -371,6 +375,11 @@ if __name__ == "__main__":
     logger.info("\n" + "="*60)
     logger.info("Local Documentation Knowledge Base MCP Server Ready!")
     logger.info("="*60)
+
+    # If --index-only flag is set, exit after indexing
+    if index_only:
+        logger.info("\nIndex-only mode: Exiting after building index.")
+        sys.exit(0)
 
     # Start the MCP server
     mcp.run()

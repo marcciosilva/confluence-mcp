@@ -161,16 +161,16 @@ else
         echo ""
         echo "Indexing in progress..."
         source "$VENV_DIR/bin/activate"
-        python3 "$SCRIPT_DIR/confluence_knowledge_base.py" 2>&1 | head -n 50
+        python3 "$SCRIPT_DIR/confluence_knowledge_base.py" --index-only
 
-        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        if [ $? -eq 0 ]; then
             echo -e "${GREEN}✓ Index built successfully${NC}"
         else
             echo -e "${YELLOW}⚠ Index build encountered issues, but you can continue${NC}"
         fi
     else
         echo -e "${YELLOW}Skipping index build. Run this command later:${NC}"
-        echo "  source $ENV_FILE && $VENV_DIR/bin/python $SCRIPT_DIR/confluence_knowledge_base.py"
+        echo "  source $ENV_FILE && $VENV_DIR/bin/python $SCRIPT_DIR/confluence_knowledge_base.py --index-only"
     fi
 fi
 
